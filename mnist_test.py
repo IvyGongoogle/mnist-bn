@@ -12,19 +12,17 @@ import tensorflow.contrib.slim as slim
 from tensorflow.python.ops import control_flow_ops
 import numpy as np
 import cv2
+FLAGS = None
+
 
 def model():
     # Create the model
     x = tf.placeholder(tf.float32, [None, 28, 28, 1])
     keep_prob = tf.placeholder(tf.float32, [])
     y_ = tf.placeholder(tf.float32, [None, 10])
-    is_training = tf.placeholder(tf.bool, [])
     x_image = tf.reshape(x, [-1, 28, 28, 1])
     with slim.arg_scope([slim.conv2d, slim.fully_connected],
-                        activation_fn=tf.nn.relu,
-                        normalizer_fn=slim.batch_norm,
-                        normalizer_params={'is_training': is_training, 'decay': 0.95}):
-
+                        activation_fn=tf.nn.relu):
         conv1 = slim.conv2d(x_image, 16, [5, 5], scope='conv1')
         pool1 = slim.max_pool2d(conv1, [2, 2], scope='pool1')
         conv2 = slim.conv2d(pool1, 32, [5, 5], scope='conv2')
@@ -51,7 +49,6 @@ def model():
     return {'x': x,
             'y_': y_,
             'keep_prob': keep_prob,
-            'is_training': is_training,
             'train_step': train_step,
             'global_step': step,
             'accuracy': accuracy,
@@ -73,6 +70,7 @@ def model():
 #         saver.restore(sess, ckpt)
 #         print("restore from the checkpoint {0}".format(ckpt))
 #
+#     acc = 0.0
 #     batch_size = FLAGS.batch_size
 #     num_iter = 10000 // batch_size
 #     batch_xs, batch_ys = mnist.test.next_batch(batch_size)
@@ -95,35 +93,29 @@ def model():
 
 def test():
     mnist = input_data.read_data_sets(FLAGS.data_dir, one_hot=True)
-
-    # get the computation graph
+    # Test trained model
     net = model()
-
     sess = tf.Session()
     sess.run(tf.global_variables_initializer())
-
-    # use moving average of variables
-    variable_averages = tf.train.ExponentialMovingAverage(0.99, net['global_step'])
-    saver = tf.train.Saver(variable_averages.variables_to_restore())
-
+    saver = tf.train.Saver()
     ckpt = tf.train.latest_checkpoint(FLAGS.checkpoint_dir)
     if ckpt:
         saver.restore(sess, ckpt)
         print("restore from the checkpoint {0}".format(ckpt))
 
+    acc = 0.0
     batch_size = FLAGS.batch_size
-    # batch_size = 1
     num_iter = 10000 // batch_size
     for i in range(1):
         batch_xs, batch_ys = mnist.test.next_batch(batch_size, shuffle=False)
+
         print ("batch_xs[0].shape:",batch_xs[0].shape)
+        io.imsave('test.jpg', np.reshape(batch_xs[0], [28,28]))
         feed_dict = {net['x']: np.reshape(batch_xs, [-1,28,28,1]),
                      net['y_']: np.reshape(batch_ys,[-1,10]),
-                     net['keep_prob']: 1.0,
-                     net['is_training']: False}
+                     net['keep_prob']: 1.0}
         fc1 = sess.run(net['fc1'], feed_dict=feed_dict)
-        print ("fc1.shape:{}".format(fc1.shape))
-        np.savetxt('./output/fc1/'+str(i)+'_bn.txt', fc1, fmt = '%8f')
+        np.savetxt('./output/fc1/'+str(i)+'.txt', fc1, fmt = '%8f')
 
     sess.close()
 
@@ -134,6 +126,7 @@ def main(_):
     else:
         test()
 
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_dir', type=str, default='MNIST_data',
@@ -142,9 +135,9 @@ if __name__ == '__main__':
                         help='Training or test phase, should be one of {"train", "test"}')
     parser.add_argument('--batch_size', type=int, default=50,
                         help='Training or test phase, should be one of {"train", "test"}')
-    parser.add_argument('--train_log_dir', type=str, default='logs_bn',
+    parser.add_argument('--train_log_dir', type=str, default='logs',
                         help='Directory for logs')
-    parser.add_argument('--checkpoint_dir', type=str, default='checkpoints_bn',
+    parser.add_argument('--checkpoint_dir', type=str, default='checkpoints',
                         help='Directory for checkpoint file')
     FLAGS, unparsed = parser.parse_known_args()
     if not os.path.isdir(FLAGS.checkpoint_dir):

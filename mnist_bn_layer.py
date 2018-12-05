@@ -11,6 +11,8 @@ import tensorflow as tf
 import tensorflow.contrib.slim as slim
 from tensorflow.python.ops import control_flow_ops
 import numpy as np
+FLAGS = None
+
 
 def model():
     # Create the model
@@ -21,8 +23,8 @@ def model():
     x_image = tf.reshape(x, [-1, 28, 28, 1])
     with slim.arg_scope([slim.conv2d, slim.fully_connected],
                         activation_fn=tf.nn.relu,
-                        normalizer_fn=slim.batch_norm,
-                        normalizer_params={'is_training': is_training, 'decay': 0.95}):
+                        normalizer_fn=tf.layers.batch_normalization,
+                        normalizer_params={'training': is_training, 'momentum': 0.95}):
         conv1 = slim.conv2d(x_image, 16, [5, 5], scope='conv1')
         pool1 = slim.max_pool2d(conv1, [2, 2], scope='pool1')
         conv2 = slim.conv2d(pool1, 32, [5, 5], scope='conv2')
@@ -46,9 +48,6 @@ def model():
         0.99, step)
     variables_averages_op = variable_averages.apply(tf.trainable_variables())
 
-    with tf.control_dependencies([train_step, variables_averages_op]):
-        train_op = tf.no_op(name='train_op')
-
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     if update_ops:
         updates = tf.group(*update_ops)
@@ -60,7 +59,6 @@ def model():
             'keep_prob': keep_prob,
             'is_training': is_training,
             'train_step': train_step,
-            'train_op': train_op,
             'global_step': step,
             'accuracy': accuracy,
             'cross_entropy': cross_entropy}
@@ -89,8 +87,7 @@ def train():
                       net['y_']: batch_ys,
                       net['keep_prob']: 0.5,
                       net['is_training']: True}
-        # step, _ = sess.run([net['global_step'], net['train_step']], feed_dict=train_dict)
-        step, _ = sess.run([net['global_step'], net['train_op']], feed_dict=train_dict)
+        step, _ = sess.run([net['global_step'], net['train_step']], feed_dict=train_dict)
         if step % 50 == 0:
             train_dict = {net['x']: np.reshape(batch_xs, [-1, 28, 28, 1]),
                           net['y_']: batch_ys,
@@ -112,7 +109,7 @@ def train():
                                              feed_dict=valid_dict)
 
             print('***** Valid step {}: entropy {}: accuracy {} *****'.format(step, entropy, acc))
-    tf.train.write_graph(sess.graph_def, '.', 'output/graph_def_bn.pb')
+    tf.train.write_graph(sess.graph_def, '.', 'output/graph_def_bn_layer.pb')
     saver.save(sess, os.path.join(FLAGS.checkpoint_dir, 'mnist-conv-slim'))
     print('Finish training')
 
@@ -174,9 +171,9 @@ if __name__ == '__main__':
                         help='Training or test phase, should be one of {"train", "test"}')
     parser.add_argument('--batch_size', type=int, default=50,
                         help='Training or test phase, should be one of {"train", "test"}')
-    parser.add_argument('--train_log_dir', type=str, default='logs_bn',
+    parser.add_argument('--train_log_dir', type=str, default='logs_bn_layer',
                         help='Directory for logs')
-    parser.add_argument('--checkpoint_dir', type=str, default='checkpoints_bn',
+    parser.add_argument('--checkpoint_dir', type=str, default='checkpoints_bn_layer',
                         help='Directory for checkpoint file')
     FLAGS, unparsed = parser.parse_known_args()
     if not os.path.isdir(FLAGS.checkpoint_dir):

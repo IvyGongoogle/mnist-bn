@@ -5,12 +5,14 @@ from __future__ import print_function
 import argparse
 import sys
 import os
-
+from skimage import io
 from tensorflow.examples.tutorials.mnist import input_data
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
 from tensorflow.python.ops import control_flow_ops
 import numpy as np
+FLAGS = None
+
 
 def model():
     # Create the model
@@ -21,8 +23,8 @@ def model():
     x_image = tf.reshape(x, [-1, 28, 28, 1])
     with slim.arg_scope([slim.conv2d, slim.fully_connected],
                         activation_fn=tf.nn.relu,
-                        normalizer_fn=slim.batch_norm,
-                        normalizer_params={'is_training': is_training, 'decay': 0.95}):
+                        normalizer_fn=tf.layers.batch_normalization):
+                        # normalizer_params={'is_training': is_training, 'decay': 0.95}):
         conv1 = slim.conv2d(x_image, 16, [5, 5], scope='conv1')
         pool1 = slim.max_pool2d(conv1, [2, 2], scope='pool1')
         conv2 = slim.conv2d(pool1, 32, [5, 5], scope='conv2')
@@ -41,29 +43,32 @@ def model():
     optimizer = tf.train.GradientDescentOptimizer(learning_rate=0.1)
     train_step = slim.learning.create_train_op(cross_entropy, optimizer, global_step=step)
 
-    # save moving average
-    variable_averages = tf.train.ExponentialMovingAverage(
-        0.99, step)
-    variables_averages_op = variable_averages.apply(tf.trainable_variables())
-
-    with tf.control_dependencies([train_step, variables_averages_op]):
-        train_op = tf.no_op(name='train_op')
-
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     if update_ops:
         updates = tf.group(*update_ops)
         cross_entropy = control_flow_ops.with_dependencies([updates], cross_entropy)
 
+    # Add summaries for BN variables
+    tf.summary.scalar('accuracy', accuracy)
+    tf.summary.scalar('cross_entropy', cross_entropy)
+    for v in tf.all_variables():
+        if v.name.startswith('conv1/Batch') or v.name.startswith('conv2/Batch') or \
+                v.name.startswith('fc1/Batch') or v.name.startswith('logits/Batch'):
+            print(v.name)
+            tf.summary.histogram(v.name, v)
+    merged_summary_op = tf.summary.merge_all()
 
     return {'x': x,
             'y_': y_,
             'keep_prob': keep_prob,
             'is_training': is_training,
             'train_step': train_step,
-            'train_op': train_op,
             'global_step': step,
             'accuracy': accuracy,
-            'cross_entropy': cross_entropy}
+            'cross_entropy': cross_entropy,
+            'summary': merged_summary_op,
+            'conv2': conv2}
+
 
 def train():
     # clear checkpoint directory
@@ -76,29 +81,34 @@ def train():
             os.remove(os.path.join(root, f))
 
     mnist = input_data.read_data_sets(FLAGS.data_dir, one_hot=True)
+    print ("~~~~~~~~~FLAGS.data_dir:",FLAGS.data_dir)
     net = model()
     sess = tf.Session()
     saver = tf.train.Saver()
     sess.run(tf.global_variables_initializer())
+    # train_writer = tf.summary.FileWriter(os.path.join(FLAGS.train_log_dir, 'train'), sess.graph)
+    # valid_writer = tf.summary.FileWriter(os.path.join(FLAGS.train_log_dir, 'valid'), sess.graph)
 
     # Train
     batch_size = FLAGS.batch_size
+    print ("~~~~~~~~~FLAGS.batch_size:",FLAGS.batch_size)
     for i in range(1001):
         batch_xs, batch_ys = mnist.train.next_batch(batch_size)
         train_dict = {net['x']: np.reshape(batch_xs, [-1, 28, 28, 1]),
                       net['y_']: batch_ys,
                       net['keep_prob']: 0.5,
                       net['is_training']: True}
-        # step, _ = sess.run([net['global_step'], net['train_step']], feed_dict=train_dict)
-        step, _ = sess.run([net['global_step'], net['train_op']], feed_dict=train_dict)
+        step, _ = sess.run([net['global_step'], net['train_step']], feed_dict=train_dict)
         if step % 50 == 0:
             train_dict = {net['x']: np.reshape(batch_xs, [-1, 28, 28, 1]),
                           net['y_']: batch_ys,
                           net['keep_prob']: 1.0,
                           net['is_training']: True}
-
+            # entropy, acc, summary = sess.run([net['cross_entropy'], net['accuracy'], net['summary']],
+            #                                  feed_dict=train_dict)
             entropy, acc = sess.run([net['cross_entropy'], net['accuracy']],
                                              feed_dict=train_dict)
+            # train_writer.add_summary(summary, global_step=step)
             print('Train step {}: entropy {}: accuracy {}'.format(step, entropy, acc))
 
             # Note: the validation error is erratic in the beginning (Maybe 2~3k steps).
@@ -110,9 +120,10 @@ def train():
                           net['is_training']: False}
             entropy, acc = sess.run([net['cross_entropy'], net['accuracy']],
                                              feed_dict=valid_dict)
-
+            # entropy, acc, summary = sess.run([net['cross_entropy'], net['accuracy'], net['summary']],
+            #                                  feed_dict=valid_dict)
+            # valid_writer.add_summary(summary, global_step=step)
             print('***** Valid step {}: entropy {}: accuracy {} *****'.format(step, entropy, acc))
-    tf.train.write_graph(sess.graph_def, '.', 'output/graph_def_bn.pb')
     saver.save(sess, os.path.join(FLAGS.checkpoint_dir, 'mnist-conv-slim'))
     print('Finish training')
 
@@ -147,15 +158,22 @@ def test():
     acc = 0.0
     batch_size = FLAGS.batch_size
     num_iter = 10000 // batch_size
-    for i in range(num_iter):
-        batch_xs, batch_ys = mnist.test.next_batch(batch_size)
-        feed_dict = {net['x']: batch_xs,
-                     net['y_']: batch_ys,
+    batch_xs, batch_ys = mnist.test.next_batch(batch_size)
+    print ("~~~~~~~~~batch_xs[0].shape:",batch_xs[0].shape)
+    for i in range(1):
+
+        feed_dict = {net['x']: np.reshape(batch_xs[0], [-1,28,28,1]),
+                     net['y_']: np.reshape(batch_ys[0],[-1,10]),
                      net['keep_prob']: 1.0,
                      net['is_training']: False}
-        acc_ = sess.run(net['accuracy'], feed_dict=feed_dict)
-        acc += acc_
-    print('Overall test accuracy {}'.format(acc / num_iter))
+        conv2_map = sess.run(net['conv2'], feed_dict=feed_dict)
+        print ("~~~~~~~~~conv2_map.shape:",conv2_map.shape)
+        conv2_map=conv2_map[0,:,:,0]
+        print ("~~~~~~~~~conv2_map.shape:",conv2_map.shape)
+        min, max = conv2_map.min(), conv2_map.max()
+        conv2_map=(conv2_map-min)/(max-min)
+        io.imsave('./output/conv2_map1.jpg',conv2_map)
+        print ("conv2_map[:50]", conv2_map[:50])
     sess.close()
 
 
@@ -174,9 +192,9 @@ if __name__ == '__main__':
                         help='Training or test phase, should be one of {"train", "test"}')
     parser.add_argument('--batch_size', type=int, default=50,
                         help='Training or test phase, should be one of {"train", "test"}')
-    parser.add_argument('--train_log_dir', type=str, default='logs_bn',
+    parser.add_argument('--train_log_dir', type=str, default='log',
                         help='Directory for logs')
-    parser.add_argument('--checkpoint_dir', type=str, default='checkpoints_bn',
+    parser.add_argument('--checkpoint_dir', type=str, default='checkpoint',
                         help='Directory for checkpoint file')
     FLAGS, unparsed = parser.parse_known_args()
     if not os.path.isdir(FLAGS.checkpoint_dir):

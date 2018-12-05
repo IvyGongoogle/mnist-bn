@@ -22,8 +22,8 @@ def model():
     x_image = tf.reshape(x, [-1, 28, 28, 1])
     with slim.arg_scope([slim.conv2d, slim.fully_connected],
                         activation_fn=tf.nn.relu,
-                        normalizer_fn=slim.batch_norm,
-                        normalizer_params={'is_training': is_training, 'decay': 0.95}):
+                        normalizer_fn=tf.layers.batch_normalization,
+                        normalizer_params={'training': is_training, 'momentum': 0.95}):
 
         conv1 = slim.conv2d(x_image, 16, [5, 5], scope='conv1')
         pool1 = slim.max_pool2d(conv1, [2, 2], scope='pool1')
@@ -60,79 +60,45 @@ def model():
             'fc1': fc,
             'conv2': conv2}
 
-# test for 'conv2'
-# def test():
-#     mnist = input_data.read_data_sets(FLAGS.data_dir, one_hot=True)
-#     # Test trained model
-#     net = model()
-#     sess = tf.Session()
-#     sess.run(tf.global_variables_initializer())
-#     saver = tf.train.Saver()
-#     ckpt = tf.train.latest_checkpoint(FLAGS.checkpoint_dir)
-#     if ckpt:
-#         saver.restore(sess, ckpt)
-#         print("restore from the checkpoint {0}".format(ckpt))
-#
-#     batch_size = FLAGS.batch_size
-#     num_iter = 10000 // batch_size
-#     batch_xs, batch_ys = mnist.test.next_batch(batch_size)
-#     print ("~~~~~~~~~batch_xs[0].shape:",batch_xs[0].shape)
-#     for i in range(1):
-#
-#         feed_dict = {net['x']: np.reshape(batch_xs[0], [-1,28,28,1]),
-#                      net['y_']: np.reshape(batch_ys[0],[-1,10]),
-#                      net['keep_prob']: 1.0,
-#                      net['is_training']: False}
-#         conv2_map = sess.run(net['conv2'], feed_dict=feed_dict)
-#         print ("~~~~~~~~~conv2_map.shape:",conv2_map.shape)
-#         conv2_map=conv2_map[0,:,:,0]
-#         print ("~~~~~~~~~conv2_map.shape:",conv2_map.shape)
-#         min, max = conv2_map.min(), conv2_map.max()
-#         conv2_map=(conv2_map-min)/(max-min)
-#         io.imsave('./output/conv2_map1.jpg',conv2_map)
-#         print ("conv2_map[:50]", conv2_map[:50])
-#     sess.close()
-
 def test():
     mnist = input_data.read_data_sets(FLAGS.data_dir, one_hot=True)
-
     # get the computation graph
     net = model()
-
     sess = tf.Session()
     sess.run(tf.global_variables_initializer())
-
-    # use moving average of variables
-    variable_averages = tf.train.ExponentialMovingAverage(0.99, net['global_step'])
-    saver = tf.train.Saver(variable_averages.variables_to_restore())
-
+    saver = tf.train.Saver()
     ckpt = tf.train.latest_checkpoint(FLAGS.checkpoint_dir)
     if ckpt:
         saver.restore(sess, ckpt)
         print("restore from the checkpoint {0}".format(ckpt))
 
+    acc = 0.0
     batch_size = FLAGS.batch_size
     # batch_size = 1
     num_iter = 10000 // batch_size
     for i in range(1):
         batch_xs, batch_ys = mnist.test.next_batch(batch_size, shuffle=False)
-        print ("batch_xs[0].shape:",batch_xs[0].shape)
+
+        print ("~~~~~~~~~batch_xs[0].shape:",batch_xs[0].shape)
+        io.imsave('test.jpg', np.reshape(batch_xs[0], [28,28]))
         feed_dict = {net['x']: np.reshape(batch_xs, [-1,28,28,1]),
                      net['y_']: np.reshape(batch_ys,[-1,10]),
                      net['keep_prob']: 1.0,
                      net['is_training']: False}
+                     
         fc1 = sess.run(net['fc1'], feed_dict=feed_dict)
         print ("fc1.shape:{}".format(fc1.shape))
-        np.savetxt('./output/fc1/'+str(i)+'_bn.txt', fc1, fmt = '%8f')
+        np.savetxt('./output/fc1/'+str(i)+'_bn_layer.txt', fc1, fmt = '%8f')
 
     sess.close()
 
 
 def main(_):
     if FLAGS.phase == 'train':
-        pass
+        train()
     else:
         test()
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -142,9 +108,9 @@ if __name__ == '__main__':
                         help='Training or test phase, should be one of {"train", "test"}')
     parser.add_argument('--batch_size', type=int, default=50,
                         help='Training or test phase, should be one of {"train", "test"}')
-    parser.add_argument('--train_log_dir', type=str, default='logs_bn',
+    parser.add_argument('--train_log_dir', type=str, default='logs_bn_layer',
                         help='Directory for logs')
-    parser.add_argument('--checkpoint_dir', type=str, default='checkpoints_bn',
+    parser.add_argument('--checkpoint_dir', type=str, default='checkpoints_bn_layer',
                         help='Directory for checkpoint file')
     FLAGS, unparsed = parser.parse_known_args()
     if not os.path.isdir(FLAGS.checkpoint_dir):
